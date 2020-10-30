@@ -122,7 +122,7 @@ def exec_create_tbl():
     _close_con(con_connection=conn, con_cursor=curs)
 
 
-@halo.Halo(text='Recreating Create tables from Original tables. Adding {} as Version to new tables : --------  '.format(version_number),
+@halo.Halo(text='Recreating Create tables from Original tables. Adding {} as Version number to new tables : --------  '.format(version_number),
            spinner='dots')
 def update_create_table(tbl: list, create_tbl: list, db_name: str):
     _recreate_old_create_table(tbl=tbl, create_tbl=create_tbl, db_name=db_name)
@@ -176,11 +176,6 @@ def modify_old_tbl_for_reuse(tbl: list, create_tbl: list):
                 'CREATE MATERIALIZED VIEW IF NOT EXISTS'
             ).replace('\\', ''))
         else:
-            print(old_create.replace(
-                'CREATE TABLE',
-                'CREATE TABLE IF NOT EXISTS'
-            ).replace('\\', ''))
-
             curs.execute(old_create.replace(
                 'CREATE TABLE',
                 'CREATE TABLE IF NOT EXISTS'
