@@ -1,0 +1,6 @@
+clickhouse-driver[lz4,zstd]
+configargparse~=1.2.3
+fabric
+halo~=0.0.30
+parallel-ssh~=2.1.0.post1
+python-dotenv~=0.14.0
