@@ -1,6 +1,7 @@
 import logging
 import sys
 from clickhouse_driver import Client, connect
+from config import connection_str
 
 
 def _configure_logger() -> logging.Logger:
@@ -23,7 +24,7 @@ def _configure_logger() -> logging.Logger:
 
 
 def ch_connection():
-    connection = connect('clickhouse://j_leonard:pass@10.4.9.38:9000')
+    connection = connect(connection_str)
     cursor = connection.cursor()
     return connection, cursor
 
