@@ -14,3 +14,4 @@ connection_str = os.getenv("CONN")
 
 newline = '\n'
 version_number = '2'
+cluster = '{cluster}'

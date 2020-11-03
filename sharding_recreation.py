@@ -9,7 +9,8 @@ from config import (
     proxy_port,
     db,
     newline,
-    version_number
+    version_number,
+    cluster,
 )
 from utils import (
     ch_connection,
@@ -23,14 +24,20 @@ create_with_table = {}
 new_table_names = {}
 
 
-def _drop_new_table():
+def _drop_new_table(database: str):
     # -------------------------------------------------------------------
     # FOR DROPPING THINGS
     global new_table_names
     con, cur = ch_connection()
     for key, val in new_table_names.items():
-        print("""drop table if exists {val} on cluster '{cluster}'""".format(val=val, cluster='{cluster}'))
-        cur.execute("""drop table if exists dev.{val} on cluster '{cluster}'""".format(val=val, cluster='{cluster}'))
+        print("""
+                drop table if exists {database}.{val} on cluster '{cluster}'
+            """.format(database=database, val=val, cluster='{cluster}')
+              )
+        cur.execute("""
+                drop table if exists {database}.{val} on cluster '{cluster}'
+                """.format(database=database, val=val, cluster='{cluster}')
+                    )
     _close_con(con_cursor=cur, con_connection=con)
 
 
@@ -183,6 +190,44 @@ def modify_old_tbl_for_reuse(tbl: list, create_tbl: list):
     _close_con(con_connection=conn, con_cursor=curs)
 
 
+@halo.Halo(text='Drop OLD tables  -------- :   ', spinner='dots')
+def _drop_old_tables(database: str):
+    conn, curs = ch_connection()
+    for key, value in new_table_names.items():
+        if '2' not in key:
+            _log_set.info(
+                f"""
+                DROP TABLE {database}.{key} ON CLUSTER '{cluster}'
+                """
+            )
+
+            curs.execute(
+                """
+                DROP TABLE {database}.{key} ON CLUSTER '{cluster}'
+                """.format(database=database, key=key, cluster='{cluster}')
+            )
+    _close_con(con_cursor=curs, con_connection=conn)
+
+
+def _rename_new_to_old(database: str):
+    conn, curs = ch_connection()
+    for key, value in new_table_names.items():
+        curs.execute(f"EXISTS {database}.{value}")
+        is_exist = [desc[0] for desc in curs.fetchall()][0]
+        if is_exist:
+            print("""
+                RENAME TABLE {database}.{value} TO {database}.{key} ON CLUSTER '{cluster}'
+                """.format(database=database, value=value, key=key, cluster='{cluster}')
+                  )
+
+            curs.execute(
+                """
+                RENAME TABLE {database}.{value} TO {database}.{key} ON CLUSTER '{cluster}'
+                """.format(database=database, value=value, key=key, cluster='{cluster}')
+            )
+    _close_con(con_cursor=curs, con_connection=conn)
+
+
 def _testing_recreating_mvs():
     # todo : try to create mv automatically
     # for key, value in create_with_table.items():
@@ -255,15 +300,21 @@ if __name__ == "__main__":
     insert_new_tbl(database=args.target_database)
 
     # # # -------------------------------------------------------------------
-    # # todo : AFTER INSERT IS COMPLETE, DELETE OLD TABLES
+
+    _drop_old_tables(database=args.target_database)
+
     # # # -------------------------------------------------------------------
     # # # -------------------------------------------------------------------
-    # # todo : AFTER OLD TABLE DELETE IS COMPLETED, RENAME NEW TABLES TO OLD NAMES
+
+    _rename_new_to_old(database=args.target_database)
+
     # # # -------------------------------------------------------------------
     # # # -------------------------------------------------------------------
-    # # todo : DEAL WITH AUTOMATED TABLE MATERIALIZED VIEW CREATION
+    # todo : DEAL WITH AUTOMATED TABLE MATERIALIZED VIEW CREATION
+    # todo : Better to generate a random number 3-5 digit to replace the version number in config. this way, the file path to zookeeper will not be
+    #  the same that it would affect new versions or change the version number each time you rebalance.
     # # # -------------------------------------------------------------------
 
     # A VERY DESTRUCTIVE QUERY, RUN WHEN YOU ARE SURE OF IT
     # # FOR DROPPING THINGS
-    # _drop_new_table()
+    # _drop_new_table(database=args.target_database)
