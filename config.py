@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+import random
 
 load_dotenv()
 
@@ -13,5 +14,5 @@ db = os.getenv("CH_DATABASE")
 connection_str = os.getenv("CONN")
 
 newline = '\n'
-version_number = '2'
+version_number = str(random.randint(1, 10))
 cluster = '{cluster}'

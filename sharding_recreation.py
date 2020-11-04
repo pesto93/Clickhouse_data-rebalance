@@ -99,33 +99,34 @@ def _recreate_old_create_table(tbl: list, create_tbl: list, db_name: str):
                 db_name + '.' + tbl[index] + version_number
             ).replace(
                 tbl[index] + '_local',
-                tbl[index] + '_local2'
+                tbl[index] + '_local_old'
             )
         # Make the what the new table will look like and push to global var new_table_names
         _create_new_table_dic(old_tbl=tbl[index])
-    # print(create_with_table)
-    # print(new_table_names)
+    # pprint(create_with_table)
+    # pprint(new_table_names)
 
 
-def exec_create_tbl():
+def exec_create_tbl(which_create: int):
     conn, curs = ch_connection()
-    for key, value in create_with_table.items():
-        if 'local' in key:
-            if 'SELECT' not in value:
-                """
-                    Skip creating materialized view table automatically. All MV should be recreated manually
-                """
-                # print("\n Creating local tables", value.replace('\\', ''), '\n')
-                curs.execute(value.replace('\\', ''))
-
-    for key, value in create_with_table.items():
-        if 'local' not in key:
-            if 'mv' not in key:
-                """
-                    Skip creating materialized view table automatically. All MV should be recreated manually
-                """
-                # print("\n Creating dist tables", value.replace('\\', ''), '\n')
-                curs.execute(value.replace('\\', ''))
+    if which_create:
+        for key, value in create_with_table.items():
+            if 'local' in key:
+                if 'SELECT' not in value:
+                    """
+                        Skip creating materialized view table automatically. All MV should be recreated manually
+                    """
+                    # print("\n Creating local tables", value.replace('\\', ''), '\n')
+                    curs.execute(value.replace('\\', ''))
+    else:
+        for key, value in create_with_table.items():
+            if 'local' not in key:
+                if 'mv' not in key:
+                    """
+                        Skip creating materialized view table automatically. All MV should be recreated manually
+                    """
+                    # print("\n Creating dist tables", value.replace('\\', ''), '\n')
+                    curs.execute(value.replace('\\', ''))
     _close_con(con_connection=conn, con_cursor=curs)
 
 
@@ -135,28 +136,28 @@ def update_create_table(tbl: list, create_tbl: list, db_name: str):
     _recreate_old_create_table(tbl=tbl, create_tbl=create_tbl, db_name=db_name)
 
 
-@halo.Halo(text='Creating new tables for data re-balance ----------   ', spinner='dots')
-def start_create_process():
-    exec_create_tbl()
-    _log_set.info("---------------> CREATE TABLE DONE <-----------------------")
+@halo.Halo(text='Creating new local tables for data re-balance ----------   ', spinner='dots')
+def start_local_create_process():
+    exec_create_tbl(which_create=1)
+    _log_set.info("---------------> CREATE LOCAL TABLE DONE <-----------------------")
 
 
-@halo.Halo(text='Inserting into new tables ------------  :  ', spinner='dots')
+@halo.Halo(text='Inserting into new table(s) from dist table(s) ------------  :  ', spinner='dots')
 def insert_new_tbl(database: str):
     conn, curs = ch_connection()
-    for old_table, new_table in new_table_names.items():
-        if 'local' not in old_table:
+    for new_table, old_table_dist in new_table_names.items():
+        if 'local' not in new_table:
             """
                 Avoid collecting info from local tables, only use distributed tables to collect all info and re-balance into new tables using same
                 distributed table too for the new tables. But to Work with distributed tables, I kinda need to make sure the old tables exists on the
                 recently added shards -> else I will get an error distributed table does not exist.
             """
-            if 'mv' not in old_table:
+            if 'mv' not in new_table:
                 """
                     Please skip inserting data into MATERIALIZED VIEW AS WELL
                 """
-                print(f"INSERT INTO {database}.{new_table} SELECT * FROM {database}.{old_table}")
-                curs.execute(f"INSERT INTO {database}.{new_table} SELECT * FROM {database}.{old_table}")
+                print(f"INSERT INTO {database}.{new_table} SELECT * FROM {database}.{old_table_dist}")
+                curs.execute(f"INSERT INTO {database}.{new_table} SELECT * FROM {database}.{old_table_dist}")
     _close_con(con_connection=conn, con_cursor=curs)
 
 
@@ -190,36 +191,35 @@ def modify_old_tbl_for_reuse(tbl: list, create_tbl: list):
     _close_con(con_connection=conn, con_cursor=curs)
 
 
-@halo.Halo(text='Drop OLD tables  -------- :   ', spinner='dots')
+@halo.Halo(text='Dropping old local and dist table(s)  -------- :   ', spinner='dots')
 def _drop_old_tables(database: str):
     conn, curs = ch_connection()
     for key, value in new_table_names.items():
-        if '2' not in key:
-            _log_set.info(
-                f"""
-                DROP TABLE {database}.{key} ON CLUSTER '{cluster}'
-                """
-            )
-
+        if any(char.isdigit() for char in value):
+            # _log_set.info(
+            #     f"""
+            #     DROP TABLE IF EXISTS {database}.{value.replace(f'local{version_number}', '_local_old')} ON CLUSTER '{cluster}'
+            #     """
+            # )
             curs.execute(
                 """
-                DROP TABLE {database}.{key} ON CLUSTER '{cluster}'
-                """.format(database=database, key=key, cluster='{cluster}')
+                DROP TABLE IF EXISTS {database}.{value} ON CLUSTER '{cluster}'
+                """.format(database=database, value=value.replace(f'local{version_number}', 'local_old'), cluster='{cluster}')
             )
     _close_con(con_cursor=curs, con_connection=conn)
 
 
-def _rename_new_to_old(database: str):
+@halo.Halo(text=f'Renaming New local table with version {version_number} to Old table  -------- :   ', spinner='dots')
+def _rename_new_to_old_tbl(database: str):
     conn, curs = ch_connection()
     for key, value in new_table_names.items():
         curs.execute(f"EXISTS {database}.{value}")
         is_exist = [desc[0] for desc in curs.fetchall()][0]
         if is_exist:
-            print("""
-                RENAME TABLE {database}.{value} TO {database}.{key} ON CLUSTER '{cluster}'
-                """.format(database=database, value=value, key=key, cluster='{cluster}')
-                  )
-
+            # print("""
+            #     RENAME TABLE {database}.{value} TO {database}.{key} ON CLUSTER '{cluster}'
+            #     """.format(database=database, value=value, key=key, cluster='{cluster}')
+            #       )
             curs.execute(
                 """
                 RENAME TABLE {database}.{value} TO {database}.{key} ON CLUSTER '{cluster}'
@@ -228,8 +228,35 @@ def _rename_new_to_old(database: str):
     _close_con(con_cursor=curs, con_connection=conn)
 
 
+@halo.Halo(text=f'Renaming Old local table to make new local table the chief  -------- :   ', spinner='dots')
+def _rename_old_local_tbl(database: str):
+    conn, curs = ch_connection()
+    for key, value in new_table_names.items():
+        if 'local' in key:
+            curs.execute(f"EXISTS {database}.{key}")
+            is_exist = [desc[0] for desc in curs.fetchall()][0]
+            if is_exist:
+                # print("""
+                #         RENAME TABLE {database}.{key} TO {database}.{key}_old ON CLUSTER '{cluster}'
+                #         """.format(database=database, key=key, cluster='{cluster}')
+                #       )
+                curs.execute(
+                    """
+                    RENAME TABLE {database}.{key} TO {database}.{key}_old ON CLUSTER '{cluster}'
+                    """.format(database=database, key=key, cluster='{cluster}')
+                )
+    _close_con(con_cursor=curs, con_connection=conn)
+    pass
+
+
+@halo.Halo(text=f'Creating New dist table to point to renamed Old local table  -------- :   ', spinner='dots')
+def start_old_dist_create_process():
+    exec_create_tbl(which_create=0)
+    _log_set.info("---------------> CREATE NEW DIST TO OLD TABLE DONE <-----------------------")
+
+
 def _testing_recreating_mvs():
-    # todo : try to create mv automatically
+    # todo : try to recreate mv automatically
     # for key, value in create_with_table.items():
     #     if 'MATERIALIZED' in value:
     #         print(new_table_names.get(key))
@@ -276,13 +303,13 @@ if __name__ == "__main__":
         tbl_list = [x for x in table_cmd[0].stdout]
         create_tbl_list = [x for x in create_table_cmd[0].stdout]
 
-    # # # -------------------------------------------------------------------
+    # # -------------------------------------------------------------------
     # Add all old table to new shard
     modify_old_tbl_for_reuse(
         tbl=tbl_list,
         create_tbl=create_tbl_list,
         )
-    # # # -------------------------------------------------------------------
+    # # -------------------------------------------------------------------
     # UPDATE THE CREATE TABLE FROM ORIGINAL TABLES
     update_create_table(
         tbl=tbl_list,
@@ -291,28 +318,23 @@ if __name__ == "__main__":
     )
     # # -------------------------------------------------------------------
     # # Start Create table process
-
-    start_create_process()
-
+    start_local_create_process()
     # # -------------------------------------------------------------------
-    # # Start Insert process
-
+    # # Start rename old local tables process
+    _rename_old_local_tbl(database=args.target_database)
+    # # -------------------------------------------------------------------
+    # # Start rename new table to the old (default) table names.
+    _rename_new_to_old_tbl(database=args.target_database)
+    # # -------------------------------------------------------------------
+    # # Start Create new dist table for old table
+    start_old_dist_create_process()
+    # # -------------------------------------------------------------------
+    # # # Start Insert process from the new distributed table pointing to the old local tables data.
     insert_new_tbl(database=args.target_database)
-
-    # # # -------------------------------------------------------------------
-
+    # # # # -------------------------------------------------------------------
     _drop_old_tables(database=args.target_database)
-
-    # # # -------------------------------------------------------------------
-    # # # -------------------------------------------------------------------
-
-    _rename_new_to_old(database=args.target_database)
-
-    # # # -------------------------------------------------------------------
-    # # # -------------------------------------------------------------------
+    # # # # -------------------------------------------------------------------
     # todo : DEAL WITH AUTOMATED TABLE MATERIALIZED VIEW CREATION
-    # todo : Better to generate a random number 3-5 digit to replace the version number in config. this way, the file path to zookeeper will not be
-    #  the same that it would affect new versions or change the version number each time you rebalance.
     # # # -------------------------------------------------------------------
 
     # A VERY DESTRUCTIVE QUERY, RUN WHEN YOU ARE SURE OF IT
